@@ -58,7 +58,9 @@ void SendSnapshot() {
   json += "}";
 
   uchar data[];
-  int len = StringToCharArray(json, data, 0, StringLen(json), CP_UTF8) - 1; // quita el \0 final
+  int written = StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+  int len = written;
+  while (len > 0 && data[len - 1] == 0) len--; // quita los \0 finales (sin asumir que es solo uno)
   ArrayResize(data, len);
 
   uchar result[];
