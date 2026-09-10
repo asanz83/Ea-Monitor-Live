@@ -197,7 +197,10 @@ document.getElementById('loginBtn').onclick = async () => {
   const msg = document.getElementById('loginMsg');
   if (!email) { msg.textContent = 'Escribe tu email.'; return; }
   msg.textContent = 'Enviando...';
-  const { error } = await supabase.auth.signInWithOtp({ email });
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.href.split('#')[0] },
+  });
   msg.textContent = error ? `Error: ${error.message}` : 'Revisa tu correo y pulsa el enlace de acceso.';
 };
 
