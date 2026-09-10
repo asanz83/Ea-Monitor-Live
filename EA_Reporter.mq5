@@ -10,7 +10,7 @@
 #property version   "1.00"
 #property strict
 
-input string InpServerUrl       = "https://TU-PROYECTO.supabase.co/functions/v1/ingest";
+input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
 input string InpAuthToken       = "";   // token de esta cuenta (te lo doy al darla de alta)
 input int    InpPushIntervalSec = 60;   // cada cuanto se manda el estado completo
 input int    InpHistoryLookbackMin = 15; // ventana de solape al buscar cierres nuevos (minutos)
