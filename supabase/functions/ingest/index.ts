@@ -43,10 +43,14 @@ Deno.serve(async (req) => {
   const accountId = account.id;
 
   let body: any;
+  const rawText = await req.text();
   try {
-    body = await req.json();
-  } catch {
-    return json({ error: true, message: "JSON inválido" }, 400);
+    body = JSON.parse(rawText);
+  } catch (e) {
+    // Devuelve un trozo del texto recibido para poder ver a simple vista
+    // qué parte del JSON generado por el EA no es válida (temporal, solo
+    // para diagnosticar -- quitar el snippet una vez esté todo estable).
+    return json({ error: true, message: "JSON inválido: " + String(e).slice(0, 120), snippet: rawText.slice(0, 300) }, 400);
   }
 
   const now = new Date().toISOString();
