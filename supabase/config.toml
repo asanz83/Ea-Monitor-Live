@@ -7,3 +7,4 @@ project_id = "ea-monitor-live"
 # Supabase Auth.
 [functions.ingest]
 verify_jwt = false
+# (comentario sin efecto, solo para disparar el primer despliegue automático)
