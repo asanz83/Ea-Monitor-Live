@@ -42,9 +42,10 @@
 
 <div id="loginBox">
   <h1>EA Monitor — En vivo</h1>
-  <p class="sub">Inicia sesión con tu email para ver el panel.</p>
+  <p class="sub">Inicia sesión para ver el panel.</p>
   <input id="emailInput" type="email" placeholder="tu@email.com" autocomplete="email">
-  <button class="primary" id="loginBtn">Enviarme un enlace de acceso</button>
+  <input id="passwordInput" type="password" placeholder="contraseña" autocomplete="current-password">
+  <button class="primary" id="loginBtn">Entrar</button>
   <div id="loginMsg"></div>
 </div>
 
@@ -194,14 +195,12 @@ async function boot() {
 
 document.getElementById('loginBtn').onclick = async () => {
   const email = document.getElementById('emailInput').value.trim();
+  const password = document.getElementById('passwordInput').value;
   const msg = document.getElementById('loginMsg');
-  if (!email) { msg.textContent = 'Escribe tu email.'; return; }
-  msg.textContent = 'Enviando...';
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.href.split('#')[0] },
-  });
-  msg.textContent = error ? `Error: ${error.message}` : 'Revisa tu correo y pulsa el enlace de acceso.';
+  if (!email || !password) { msg.textContent = 'Escribe email y contraseña.'; return; }
+  msg.textContent = 'Entrando...';
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  msg.textContent = error ? `Error: ${error.message}` : '';
 };
 
 supabase.auth.onAuthStateChange((_event, session) => {
