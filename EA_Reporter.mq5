@@ -2,15 +2,15 @@
 //| EA_Reporter.mq5                                                    |
 //| EA "reportero": no opera, solo lee el estado de la cuenta (saldo, |
 //| posiciones abiertas, operaciones cerradas nuevas) y lo envía por  |
-//| HTTP a ea-monitor-live (Cloudflare Worker). Un EA reportero por   |
-//| cuenta, enganchado a un solo gráfico cualquiera de esa cuenta —   |
-//| no toca ni sustituye a los EAs de trading que ya tengas puestos.  |
+//| HTTP a ea-monitor-live (Supabase Edge Function). Un EA reportero  |
+//| por cuenta, enganchado a un solo gráfico cualquiera de esa cuenta |
+//| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
 #property version   "1.00"
 #property strict
 
-input string InpServerUrl       = "https://ea-monitor-live.<tu-subdominio>.workers.dev/ingest";
+input string InpServerUrl       = "https://TU-PROYECTO.supabase.co/functions/v1/ingest";
 input string InpAuthToken       = "";   // token de esta cuenta (te lo doy al darla de alta)
 input int    InpPushIntervalSec = 60;   // cada cuanto se manda el estado completo
 input int    InpHistoryLookbackMin = 15; // ventana de solape al buscar cierres nuevos (minutos)

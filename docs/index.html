@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EA Monitor — En vivo</title>
+<style>
+  :root {
+    --bg: #0b0f17; --bg2: #131a26; --bg3: #1b2433;
+    --border: #232d3e; --text: #e5e9f0; --muted: #8b96a8;
+    --accent: #3b82f6; --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  select, input, button { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 13px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0 20px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .card .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .card .value { font-size: 18px; font-weight: 600; font-family: var(--mono); margin-top: 4px; }
+  .stale { color: var(--amber); }
+  .live { color: var(--green); }
+  table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 24px; }
+  th, td { padding: 8px 12px; text-align: left; font-size: 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
+  td.num { font-family: var(--mono); }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin: 0 0 8px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 12px; }
+  #loginBox { max-width: 360px; margin: 80px auto; text-align: center; }
+  #loginBox input { width: 100%; margin: 12px 0; }
+  #loginBox button { width: 100%; }
+  #loginMsg { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="loginBox">
+  <h1>EA Monitor — En vivo</h1>
+  <p class="sub">Inicia sesión con tu email para ver el panel.</p>
+  <input id="emailInput" type="email" placeholder="tu@email.com" autocomplete="email">
+  <button class="primary" id="loginBtn">Enviarme un enlace de acceso</button>
+  <div id="loginMsg"></div>
+</div>
+
+<div id="dashboard" hidden>
+  <h1>EA Monitor — En vivo</h1>
+  <div class="sub" id="lastUpdate">Cargando...</div>
+
+  <select id="accountSelect"></select>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Posiciones abiertas</h2>
+  <div id="positionsBox"></div>
+
+  <h2>Últimas operaciones cerradas</h2>
+  <div id="tradesBox"></div>
+</div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// Rellenar con los datos de tu proyecto (Supabase Dashboard > Project Settings > API).
+// La "anon key" está pensada para ir en el navegador -- no es un secreto, el
+// control de acceso real lo hace RLS + login (ver migrations/0001_init.sql).
+const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';
+const SUPABASE_ANON_KEY = 'TU-ANON-KEY';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let accounts = [];
+let currentAccountId = null;
+let channel = null;
+
+function fmtMoney(v) {
+  if (v == null) return '—';
+  const n = Number(v);
+  return (n >= 0 ? '+' : '') + '$' + n.toFixed(2);
+}
+function fmtAgo(iso) {
+  if (!iso) return 'sin datos';
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return `hace ${secs}s`;
+  if (secs < 3600) return `hace ${Math.floor(secs / 60)}min`;
+  return `hace ${Math.floor(secs / 3600)}h`;
+}
+function isStale(iso, thresholdSec = 300) {
+  if (!iso) return true;
+  return (Date.now() - new Date(iso).getTime()) / 1000 > thresholdSec;
+}
+
+async function loadAccounts() {
+  const { data, error } = await supabase.from('accounts').select('*').order('label');
+  if (error) { console.error(error); return; }
+  accounts = data || [];
+  const sel = document.getElementById('accountSelect');
+  sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.label || a.mt5_login}</option>`).join('');
+  if (!currentAccountId && accounts.length) currentAccountId = accounts[0].id;
+  sel.value = currentAccountId;
+  sel.onchange = () => { currentAccountId = Number(sel.value); subscribeAccount(); refresh(); };
+}
+
+function renderCards() {
+  const acc = accounts.find(a => a.id === currentAccountId);
+  if (!acc) return;
+  const stale = isStale(acc.last_seen_at);
+  document.getElementById('lastUpdate').innerHTML =
+    `${acc.label || acc.mt5_login} · <span class="${stale ? 'stale' : 'live'}">${stale ? '' : '● '}${fmtAgo(acc.last_seen_at)}</span>`;
+}
+
+async function loadLatestSnapshot() {
+  const { data } = await supabase.from('account_snapshots')
+    .select('*').eq('account_id', currentAccountId).order('ts', { ascending: false }).limit(1);
+  const s = data && data[0];
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="label">Balance</div><div class="value">${fmtMoney(s?.balance)}</div></div>
+    <div class="card"><div class="label">Equity</div><div class="value">${fmtMoney(s?.equity)}</div></div>
+    <div class="card"><div class="label">Nivel margen</div><div class="value">${s?.margin_level != null ? Number(s.margin_level).toFixed(0) + '%' : '—'}</div></div>
+  `;
+}
+
+async function loadPositions() {
+  const { data } = await supabase.from('open_positions')
+    .select('*').eq('account_id', currentAccountId).order('open_time', { ascending: false });
+  const rows = data || [];
+  const box = document.getElementById('positionsBox');
+  if (!rows.length) { box.innerHTML = '<div class="empty">Sin posiciones abiertas</div>'; return; }
+  box.innerHTML = `<table><thead><tr>
+    <th>Símbolo</th><th>Tipo</th><th>Volumen</th><th>Apertura</th><th>P&amp;L</th><th>EA</th>
+    </tr></thead><tbody>${rows.map(p => `
+    <tr>
+      <td>${p.symbol || ''}</td>
+      <td>${(p.type || '').toUpperCase()}</td>
+      <td class="num">${p.volume ?? ''}</td>
+      <td class="num">${p.open_price ?? ''}</td>
+      <td class="num ${p.profit >= 0 ? 'pos' : 'neg'}">${fmtMoney(p.profit)}</td>
+      <td>${p.comment || ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function loadTrades() {
+  const { data } = await supabase.from('closed_trades')
+    .select('*').eq('account_id', currentAccountId).order('close_time', { ascending: false }).limit(30);
+  const rows = data || [];
+  const box = document.getElementById('tradesBox');
+  if (!rows.length) { box.innerHTML = '<div class="empty">Sin operaciones cerradas todavía</div>'; return; }
+  box.innerHTML = `<table><thead><tr>
+    <th>Cierre</th><th>Símbolo</th><th>Tipo</th><th>Volumen</th><th>P&amp;L</th><th>EA</th>
+    </tr></thead><tbody>${rows.map(t => `
+    <tr>
+      <td>${(t.close_time || '').replace('T', ' ').slice(0, 16)}</td>
+      <td>${t.symbol || ''}</td>
+      <td>${(t.type || '').toUpperCase()}</td>
+      <td class="num">${t.volume ?? ''}</td>
+      <td class="num ${t.profit >= 0 ? 'pos' : 'neg'}">${fmtMoney(t.profit)}</td>
+      <td>${t.comment || ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function refresh() {
+  if (!currentAccountId) return;
+  renderCards();
+  await Promise.all([loadLatestSnapshot(), loadPositions(), loadTrades()]);
+}
+
+// Tiempo real: en vez de refrescar por tiempo, escucha cambios en Postgres y
+// vuelve a pintar solo cuando de verdad llega algo nuevo para esta cuenta.
+function subscribeAccount() {
+  if (channel) supabase.removeChannel(channel);
+  if (!currentAccountId) return;
+  channel = supabase
+    .channel(`account-${currentAccountId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'open_positions', filter: `account_id=eq.${currentAccountId}` }, loadPositions)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'closed_trades', filter: `account_id=eq.${currentAccountId}` }, loadTrades)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'account_snapshots', filter: `account_id=eq.${currentAccountId}` }, () => { loadLatestSnapshot(); loadAccounts().then(renderCards); })
+    .subscribe();
+}
+
+async function boot() {
+  document.getElementById('loginBox').hidden = true;
+  document.getElementById('dashboard').hidden = false;
+  await loadAccounts();
+  subscribeAccount();
+  await refresh();
+  // El "hace Xs" del último dato hay que recalcularlo aunque no llegue nada nuevo.
+  setInterval(renderCards, 5000);
+}
+
+document.getElementById('loginBtn').onclick = async () => {
+  const email = document.getElementById('emailInput').value.trim();
+  const msg = document.getElementById('loginMsg');
+  if (!email) { msg.textContent = 'Escribe tu email.'; return; }
+  msg.textContent = 'Enviando...';
+  const { error } = await supabase.auth.signInWithOtp({ email });
+  msg.textContent = error ? `Error: ${error.message}` : 'Revisa tu correo y pulsa el enlace de acceso.';
+};
+
+supabase.auth.onAuthStateChange((_event, session) => {
+  if (session) boot();
+});
+
+const { data: { session } } = await supabase.auth.getSession();
+if (session) boot();
+</script>
+</body>
+</html>

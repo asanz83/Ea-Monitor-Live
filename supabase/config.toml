@@ -1,0 +1,9 @@
+project_id = "ea-monitor-live"
+
+# El EA manda SU PROPIO token (por cuenta, verificado a mano dentro de la
+# función) en la cabecera Authorization -- no un JWT de Supabase. Sin esto,
+# la puerta de entrada de Supabase rechazaría la petición antes de que
+# nuestro código llegue a comprobar nada, porque no es un JWT válido de
+# Supabase Auth.
+[functions.ingest]
+verify_jwt = false
