@@ -54,6 +54,24 @@ Deno.serve(async (req) => {
   }
 
   const now = new Date().toISOString();
+
+  // Envio aparte de velas (EA_Reporter v1.1): un POST por simbolo con posicion
+  // abierta, cada pocos minutos. NO toca snapshots ni posiciones -- sin este
+  // desvio, un cuerpo sin "open_positions" se interpretaria como "no hay
+  // ninguna abierta" y borraria las posiciones de la cuenta.
+  if (body.candles_only) {
+    const sym = String(body.symbol || "");
+    const list: any[] = Array.isArray(body.candles) ? body.candles : [];
+    if (!sym || !list.length) return json({ error: true, message: "Sin velas" }, 400);
+    const rows = list
+      .filter((c) => c && c.tf && Array.isArray(c.bars) && c.bars.length)
+      .map((c) => ({ account_id: accountId, symbol: sym, tf: String(c.tf), bars: c.bars, updated_at: now }));
+    if (!rows.length) return json({ error: true, message: "Velas vacias" }, 400);
+    const { error } = await supabase.from("candles").upsert(rows, { onConflict: "account_id,symbol,tf" });
+    if (error) return json({ error: true, message: error.message }, 500);
+    return json({ error: false, received: { candles: rows.length } });
+  }
+
   const acc = body.account || {};
   const openPositions: any[] = Array.isArray(body.open_positions) ? body.open_positions : [];
   const closedTrades: any[] = Array.isArray(body.closed_trades) ? body.closed_trades : [];
@@ -94,6 +112,16 @@ Deno.serve(async (req) => {
     }));
     const { error } = await supabase.from("open_positions").insert(rows);
     if (error) return json({ error: true, message: error.message }, 500);
+  }
+
+  // Limpia las velas de simbolos que ya no tienen posicion abierta (si la
+  // tabla aun no existe, el error se ignora a proposito: no debe romper el
+  // envio principal).
+  {
+    const symbols = [...new Set(openPositions.map((p) => p.symbol).filter(Boolean))];
+    let q = supabase.from("candles").delete().eq("account_id", accountId);
+    if (symbols.length) q = q.not("symbol", "in", `(${symbols.map((s) => `"${s}"`).join(",")})`);
+    await q;
   }
 
   // Operaciones cerradas: solo se añaden, nunca se borran. upsert con

@@ -7,15 +7,19 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
 input string InpAuthToken       = "";   // token de esta cuenta (te lo doy al darla de alta)
 input int    InpPushIntervalSec = 60;   // cada cuanto se manda el estado completo
 input int    InpHistoryLookbackMin = 15; // ventana de solape al buscar cierres nuevos (minutos)
+input bool   InpSendCandles     = true; // v1.1: mandar velas de los simbolos con posicion abierta (grafico en ea_monitor)
+input int    InpCandlesIntervalSec = 300; // cada cuanto se refrescan las velas (un simbolo nuevo se manda enseguida)
 
 datetime g_lastHistoryCheck = 0;
+datetime g_lastCandles = 0;        // hora local del ultimo refresco periodico de velas
+string   g_candleSymbols = "|";    // simbolos cuyas velas ya se mandaron (formato "|NDX|EURUSD|")
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -31,6 +35,7 @@ void OnDeinit(const int reason) {
 
 void OnTimer() {
   SendSnapshot();
+  MaybeSendCandles();
 }
 
 // Envío inmediato extra al cerrarse una operación, para que no haya que
@@ -81,6 +86,105 @@ void SendSnapshot() {
     return;
   }
   g_lastHistoryCheck = TimeCurrent() - InpHistoryLookbackMin * 60; // avanza la ventana solo si fue bien
+}
+
+//+------------------------------------------------------------------+
+//| v1.1 -- Velas de los simbolos con posicion abierta                |
+//| Un POST aparte por simbolo (cuerpo con "candles_only"), para no   |
+//| engordar el envio principal ni arriesgar su timeout. Un simbolo   |
+//| NUEVO se manda en el siguiente timer; los ya enviados se refrescan|
+//| cada InpCandlesIntervalSec. Si MT5 aun no tiene el historial de   |
+//| un simbolo (CopyRates devuelve <=0) se reintenta en el siguiente. |
+//+------------------------------------------------------------------+
+void MaybeSendCandles() {
+  if (!InpSendCandles || InpAuthToken == "") return;
+
+  // Simbolos con posicion abierta ahora mismo.
+  string openSyms[];
+  int nOpen = 0;
+  int total = PositionsTotal();
+  for (int i = 0; i < total; i++) {
+    ulong ticket = PositionGetTicket(i);
+    if (!PositionSelectByTicket(ticket)) continue;
+    string sym = PositionGetString(POSITION_SYMBOL);
+    bool dup = false;
+    for (int k = 0; k < nOpen; k++) if (openSyms[k] == sym) { dup = true; break; }
+    if (dup) continue;
+    ArrayResize(openSyms, nOpen + 1);
+    openSyms[nOpen++] = sym;
+  }
+
+  // Olvida los simbolos ya cerrados: si vuelve a abrirse uno, sus velas se mandan enseguida.
+  string kept = "|";
+  for (int k = 0; k < nOpen; k++)
+    if (StringFind(g_candleSymbols, "|" + openSyms[k] + "|") >= 0) kept += openSyms[k] + "|";
+  g_candleSymbols = kept;
+
+  bool periodicDue = (TimeLocal() - g_lastCandles) >= InpCandlesIntervalSec;
+  bool sentAny = false;
+  for (int k = 0; k < nOpen; k++) {
+    bool isNew = StringFind(g_candleSymbols, "|" + openSyms[k] + "|") < 0;
+    if (!isNew && !periodicDue) continue;
+    if (PostCandles(openSyms[k])) {
+      if (isNew) g_candleSymbols += openSyms[k] + "|";
+      sentAny = true;
+    }
+  }
+  if (periodicDue && (sentAny || nOpen == 0)) g_lastCandles = TimeLocal();
+}
+
+bool PostCandles(string sym) {
+  ENUM_TIMEFRAMES tfs[4]  = {PERIOD_M5, PERIOD_M15, PERIOD_H1, PERIOD_H4};
+  string          names[4] = {"M5", "M15", "H1", "H4"};
+  int             counts[4] = {288, 300, 300, 200};
+  int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+
+  string arr = "[";
+  bool firstTf = true;
+  for (int t = 0; t < 4; t++) {
+    MqlRates rates[];
+    ArraySetAsSeries(rates, false);   // orden cronologico (la mas antigua primero)
+    int got = CopyRates(sym, tfs[t], 0, counts[t], rates);
+    if (got <= 0) continue;
+    if (!firstTf) arr += ",";
+    firstTf = false;
+    arr += "{\"tf\":\"" + names[t] + "\",\"bars\":[";
+    for (int i = 0; i < got; i++) {
+      if (i > 0) arr += ",";
+      arr += "[" + IntegerToString((long)rates[i].time) + "," +
+             DoubleToString(rates[i].open, digits) + "," + DoubleToString(rates[i].high, digits) + "," +
+             DoubleToString(rates[i].low, digits) + "," + DoubleToString(rates[i].close, digits) + "]";
+    }
+    arr += "]}";
+  }
+  arr += "]";
+  if (firstTf) return false;   // MT5 aun no tenia historial de este simbolo
+
+  string json = "{\"mt5_login\":\"" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "\"," +
+                "\"candles_only\":true,\"symbol\":\"" + JsonEscape(sym) + "\",\"candles\":" + arr + "}";
+
+  uchar data[];
+  int written = StringToCharArray(json, data, 0, StringLen(json), CP_UTF8);
+  int len = written;
+  while (len > 0 && data[len - 1] == 0) len--;
+  ArrayResize(data, len);
+
+  uchar result[];
+  string resultHeaders;
+  string headers = "Content-Type: application/json
+Authorization: Bearer " + InpAuthToken + "
+";
+  ResetLastError();
+  int status = WebRequest("POST", InpServerUrl, headers, 10000, data, result, resultHeaders);
+  if (status == -1) {
+    Print("EA_Reporter: WebRequest de velas fallo (", sym, "), error ", GetLastError());
+    return false;
+  }
+  if (status != 200) {
+    Print("EA_Reporter: velas de ", sym, " -> servidor respondio ", status, " -> ", CharArrayToString(result));
+    return false;
+  }
+  return true;
 }
 
 //+------------------------------------------------------------------+
