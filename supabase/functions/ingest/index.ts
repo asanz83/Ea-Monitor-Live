@@ -18,6 +18,27 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Avisos de apertura/cierre de operaciones: esta funcion NO habla con Telegram
+// directamente; le pasa los eventos a la app de ea_monitor (que ya tiene el bot
+// configurado y sabe formatear el mensaje). Necesita el secreto
+// ALERTS_CRON_SECRET en los secretos de las Edge Functions de Supabase; si no
+// esta, no avisa y todo lo demas funciona igual.
+const APP_URL = "https://ea-monitor-app-1n94.onrender.com";
+
+function notifyTradeEvents(payload: unknown) {
+  const secret = Deno.env.get("ALERTS_CRON_SECRET");
+  if (!secret) return;
+  const p = fetch(`${APP_URL}/api/alerts/trade-event?key=${encodeURIComponent(secret)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => {});
+  // waitUntil: seguir el envio sin retrasar la respuesta al EA (que solo espera 5 s)
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(p);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return json({ error: true, message: "Solo POST" }, 405);
@@ -35,7 +56,7 @@ Deno.serve(async (req) => {
   const tokenHash = await sha256Hex(token);
   const { data: account, error: accErr } = await supabase
     .from("accounts")
-    .select("id")
+    .select("id,last_seen_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
   if (accErr) return json({ error: true, message: accErr.message }, 500);
@@ -88,6 +109,18 @@ Deno.serve(async (req) => {
   });
   if (snapErr) return json({ error: true, message: snapErr.message }, 500);
 
+  // Estado anterior, para detectar aperturas/cierres NUEVOS. Solo se avisa si la
+  // cuenta venia reportando hace poco (<10 min): con la primera carga de una
+  // cuenta, o tras una caida larga, se inundaria de avisos de cosas antiguas.
+  const { data: prevPos } = await supabase
+    .from("open_positions").select("ticket,symbol,comment,magic").eq("account_id", accountId);
+  const prevByTicket = new Map((prevPos ?? []).map((p: any) => [String(p.ticket), p]));
+  const recentlySeen = !!account.last_seen_at &&
+    (Date.now() - Date.parse(account.last_seen_at)) < 10 * 60 * 1000;
+  const openedEvents = recentlySeen
+    ? openPositions.filter((p) => !prevByTicket.has(String(p.ticket)))
+    : [];
+
   // Posiciones abiertas: se reemplaza el conjunto entero de esta cuenta en
   // cada push (MT5 siempre manda el estado actual completo, no deltas).
   const { error: delErr } = await supabase.from("open_positions").delete().eq("account_id", accountId);
@@ -127,7 +160,19 @@ Deno.serve(async (req) => {
   // Operaciones cerradas: solo se añaden, nunca se borran. upsert con
   // ignoreDuplicates resuelve el "ya la tenía" gratis via la clave primaria
   // (account_id, ticket).
+  let closedEvents: any[] = [];
   if (closedTrades.length) {
+    const sent = closedTrades.map((t) => String(t.ticket));
+    const { data: already } = await supabase
+      .from("closed_trades").select("ticket").eq("account_id", accountId).in("ticket", sent);
+    const alreadySet = new Set((already ?? []).map((r: any) => String(r.ticket)));
+    if (recentlySeen) {
+      closedEvents = closedTrades
+        .filter((t) => !alreadySet.has(String(t.ticket)))
+        // El comentario del cierre suele ser "[tp ...]"/"[sl ...]"; el nombre
+        // del EA esta en el de la posicion cuando estaba abierta.
+        .map((t) => ({ ...t, ea_comment: prevByTicket.get(String(t.ticket))?.comment || t.comment }));
+    }
     const rows = closedTrades.map((t) => ({
       account_id: accountId,
       ticket: String(t.ticket),
@@ -149,6 +194,10 @@ Deno.serve(async (req) => {
       .from("closed_trades")
       .upsert(rows, { onConflict: "account_id,ticket", ignoreDuplicates: true });
     if (error) return json({ error: true, message: error.message }, 500);
+  }
+
+  if (openedEvents.length || closedEvents.length) {
+    notifyTradeEvents({ account_id: accountId, opened: openedEvents, closed: closedEvents });
   }
 
   const { error: touchErr } = await supabase
