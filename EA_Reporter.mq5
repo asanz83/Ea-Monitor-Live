@@ -171,9 +171,7 @@ bool PostCandles(string sym) {
 
   uchar result[];
   string resultHeaders;
-  string headers = "Content-Type: application/json
-Authorization: Bearer " + InpAuthToken + "
-";
+  string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + InpAuthToken + "\r\n";
   ResetLastError();
   int status = WebRequest("POST", InpServerUrl, headers, 10000, data, result, resultHeaders);
   if (status == -1) {
