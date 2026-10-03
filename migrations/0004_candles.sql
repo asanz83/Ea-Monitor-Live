@@ -17,3 +17,7 @@ create table if not exists candles (
 alter table candles enable row level security;
 create policy "candles_read_authenticated" on candles
   for select to authenticated using (true);
+
+-- Permisos explicitos: sin ellos la API devuelve 403 (las tablas nuevas ya no los reciben solas).
+grant select, insert, update, delete on table candles to service_role;
+grant select on table candles to authenticated;
