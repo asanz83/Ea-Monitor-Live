@@ -7,7 +7,7 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
@@ -194,9 +194,19 @@ string BuildAccountJson() {
   s += "\"free_margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + ",";
   s += "\"margin_level\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_LEVEL), 2) + ",";
   s += "\"currency\":\"" + AccountInfoString(ACCOUNT_CURRENCY) + "\",";
-  s += "\"broker\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\"";
+  s += "\"broker\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
+  // v1.11 -- permisos de trading automatico. ea_monitor avisa por Telegram si el
+  // SERVIDOR deja de permitir EAs (trade_expert / trade_allowed = false) o si el
+  // boton "Trading algoritmico" del terminal esta apagado (terminal_trade_allowed).
+  s += "\"trade_expert\":" + JsonBool(AccountInfoInteger(ACCOUNT_TRADE_EXPERT) != 0) + ",";
+  s += "\"trade_allowed\":" + JsonBool(AccountInfoInteger(ACCOUNT_TRADE_ALLOWED) != 0) + ",";
+  s += "\"terminal_trade_allowed\":" + JsonBool(TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) != 0);
   s += "}";
   return s;
+}
+
+string JsonBool(bool b) {
+  return b ? "true" : "false";
 }
 
 //+------------------------------------------------------------------+

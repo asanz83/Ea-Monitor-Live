@@ -39,6 +39,98 @@ function notifyTradeEvents(payload: unknown) {
   if (rt?.waitUntil) rt.waitUntil(p);
 }
 
+// Seguimiento de los permisos de trading automatico (EA_Reporter v1.11+).
+// Estado de la cuenta: 'ok' | 'server' (el servidor/cuenta no permite EAs:
+// ACCOUNT_TRADE_EXPERT o ACCOUNT_TRADE_ALLOWED = false) | 'terminal' (boton
+// "Trading algoritmico" apagado). Se avisa al CONFIRMAR el cambio tras 3 envios
+// seguidos (~3 min) para no dar falsas alarmas por un parpadeo, y otra vez cuando
+// se restablece. Todo en un try/catch: si las columnas aun no existen (migracion
+// 0005) o algo falla, el envio normal del EA no se ve afectado.
+const EXPERT_CONFIRM = 3;
+
+function notifyExpertState(payload: unknown) {
+  const secret = Deno.env.get("ALERTS_CRON_SECRET");
+  if (!secret) return;
+  const p = fetch(`${APP_URL}/api/alerts/expert-state?key=${encodeURIComponent(secret)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => {});
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt?.waitUntil) rt.waitUntil(p);
+}
+
+async function trackExpertState(supabase: any, accountId: number, acc: any, now: string) {
+  try {
+    const hasFlags = typeof acc.trade_expert === "boolean" || typeof acc.trade_allowed === "boolean" ||
+      typeof acc.terminal_trade_allowed === "boolean";
+    if (!hasFlags) return; // versiones antiguas del EA no mandan estos campos
+
+    let state = "ok";
+    if (acc.trade_expert === false || acc.trade_allowed === false) state = "server";
+    else if (acc.terminal_trade_allowed === false) state = "terminal";
+
+    const { data: cur, error } = await supabase
+      .from("accounts")
+      .select("expert_state,expert_state_count,expert_state_since,expert_alerted,expert_blocked_since")
+      .eq("id", accountId)
+      .maybeSingle();
+    if (error || !cur) return; // columnas aun no creadas
+
+    const same = cur.expert_state === state;
+    const prevCount = same ? (cur.expert_state_count ?? 0) : 0;
+    const count = Math.min(prevCount + 1, EXPERT_CONFIRM);
+    const since = same && cur.expert_state_since ? cur.expert_state_since : now;
+    let alerted: string | null = cur.expert_alerted ?? null;
+    let blockedSince: string | null = cur.expert_blocked_since ?? null;
+    let notify: string | null = null;
+
+    if (count >= EXPERT_CONFIRM && alerted !== state) {
+      if (state === "ok") {
+        if (alerted !== null) notify = "restored"; // primera vez que se ve 'ok': silencioso
+      } else {
+        notify = state;
+        blockedSince = since;
+      }
+      alerted = state;
+    }
+
+    // Sin cambios que guardar (estado estable y ya avisado): no se escribe nada.
+    if (same && cur.expert_state_count === count && (cur.expert_alerted ?? null) === alerted) return;
+
+    // Compare-and-set sobre el contador anterior: si dos envios casi simultaneos
+    // llegan a la vez, solo uno gana y solo ese avisa (sin mensajes duplicados).
+    const prevStored = cur.expert_state_count ?? 0;
+    let q = supabase.from("accounts").update({
+      expert_state: state,
+      expert_state_count: count,
+      expert_state_since: since,
+      expert_alerted: alerted,
+      expert_blocked_since: state === "ok" ? null : blockedSince,
+    }).eq("id", accountId).eq("expert_state_count", prevStored);
+    q = cur.expert_state == null ? q.is("expert_state", null) : q.eq("expert_state", cur.expert_state);
+    const { data: updated, error: upErr } = await q.select("id");
+    if (upErr || !updated?.length) return;
+
+    if (notify) {
+      notifyExpertState({
+        account_id: accountId,
+        event: notify, // 'server' | 'terminal' | 'restored'
+        since: notify === "restored" ? cur.expert_blocked_since : since,
+        until: now,
+        flags: {
+          trade_expert: acc.trade_expert ?? null,
+          trade_allowed: acc.trade_allowed ?? null,
+          terminal_trade_allowed: acc.terminal_trade_allowed ?? null,
+        },
+      });
+    }
+  } catch (_e) {
+    // nunca debe tumbar el envio principal
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return json({ error: true, message: "Solo POST" }, 405);
@@ -108,6 +200,9 @@ Deno.serve(async (req) => {
     margin_level: acc.margin_level ?? null,
   });
   if (snapErr) return json({ error: true, message: snapErr.message }, 500);
+
+  // v1.11: permisos de trading automatico (aviso si el servidor deshabilita los EAs)
+  await trackExpertState(supabase, accountId, acc, now);
 
   // Estado anterior, para detectar aperturas/cierres NUEVOS. Solo se avisa si la
   // cuenta venia reportando hace poco (<10 min): con la primera carga de una
