@@ -237,8 +237,17 @@ Deno.serve(async (req) => {
       magic: p.magic ?? null,
       comment: p.comment ?? null,
       updated_at: now,
+      // v1.12: dinero al llegar al SL / TP (null si no hay nivel o el EA es antiguo)
+      profit_sl: p.profit_sl ?? null,
+      profit_tp: p.profit_tp ?? null,
     }));
-    const { error } = await supabase.from("open_positions").insert(rows);
+    let { error } = await supabase.from("open_positions").insert(rows);
+    if (error) {
+      // Si la migracion 0006 aun no se ha ejecutado, las columnas nuevas no existen:
+      // reintenta sin ellas para no perder el envio.
+      const legacyRows = rows.map(({ profit_sl: _a, profit_tp: _b, ...rest }) => rest);
+      ({ error } = await supabase.from("open_positions").insert(legacyRows));
+    }
     if (error) return json({ error: true, message: error.message }, 500);
   }
 

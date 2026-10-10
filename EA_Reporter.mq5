@@ -7,7 +7,7 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
@@ -228,12 +228,31 @@ string BuildOpenPositionsJson() {
     s += "\"tp\":" + DoubleToString(PositionGetDouble(POSITION_TP), 5) + ",";
     s += "\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2) + ",";
     s += "\"swap\":" + DoubleToString(PositionGetDouble(POSITION_SWAP), 2) + ",";
+    // v1.12 -- dinero que se ganaria/perderia (en la divisa de la cuenta, sin comision
+    // ni swap) si el precio llegara al TP o al SL actuales. Lo calcula MT5 con
+    // OrderCalcProfit, asi que es exacto para cualquier simbolo. Si el SL/TP se mueve
+    // (trailing), el siguiente envio ya trae el importe nuevo. null = sin SL/TP.
+    ENUM_ORDER_TYPE ptype = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+    string psym = PositionGetString(POSITION_SYMBOL);
+    double pvol = PositionGetDouble(POSITION_VOLUME);
+    double popen = PositionGetDouble(POSITION_PRICE_OPEN);
+    s += "\"profit_sl\":" + ProfitAtPriceJson(ptype, psym, pvol, popen, PositionGetDouble(POSITION_SL)) + ",";
+    s += "\"profit_tp\":" + ProfitAtPriceJson(ptype, psym, pvol, popen, PositionGetDouble(POSITION_TP)) + ",";
     s += "\"magic\":" + IntegerToString((long)PositionGetInteger(POSITION_MAGIC)) + ",";
     s += "\"comment\":\"" + JsonEscape(PositionGetString(POSITION_COMMENT)) + "\"";
     s += "}";
   }
   s += "]";
   return s;
+}
+
+// Beneficio/perdida de la posicion si el precio llega a `closePrice`; "null" si no hay
+// nivel (0) o MT5 no puede calcularlo.
+string ProfitAtPriceJson(ENUM_ORDER_TYPE type, string sym, double vol, double openPrice, double closePrice) {
+  if (closePrice <= 0) return "null";
+  double p = 0;
+  if (!OrderCalcProfit(type, sym, vol, openPrice, closePrice, p)) return "null";
+  return DoubleToString(p, 2);
 }
 
 //+------------------------------------------------------------------+
