@@ -2,3 +2,14 @@ node_modules/
 .env
 .env.local
 Thumbs.db
+
+# Scripts/SQL de un solo uso generados durante la puesta en marcha (tokens en
+# claro, backfills de cuentas) -- nunca deben subirse al repo.
+*_tokens.txt
+accounts_batch*.sql
+backfill_*.sql
+ea_backtest_*.sql
+ea_stats_rows.txt
+ea_daily_rows.txt
+app_config_seed.sql
+fix_max_consec.sql
