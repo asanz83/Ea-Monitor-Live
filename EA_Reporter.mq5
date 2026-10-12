@@ -7,7 +7,7 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
@@ -138,6 +138,7 @@ bool PostCandles(string sym) {
   string          names[4] = {"M5", "M15", "H1", "H4"};
   int             counts[4] = {288, 300, 300, 200};
   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+  double point = SymbolInfoDouble(sym, SYMBOL_POINT);
 
   string arr = "[";
   bool firstTf = true;
@@ -151,9 +152,12 @@ bool PostCandles(string sym) {
     arr += "{\"tf\":\"" + names[t] + "\",\"bars\":[";
     for (int i = 0; i < got; i++) {
       if (i > 0) arr += ",";
+      // v1.13 -- 6.º valor: spread de la vela en PRECIO (puntos * tamano del punto). Las velas son
+      // de BID; un SELL se cierra por ASK = bid + spread, y el grafico lo usa para dibujar el ask.
       arr += "[" + IntegerToString((long)rates[i].time) + "," +
              DoubleToString(rates[i].open, digits) + "," + DoubleToString(rates[i].high, digits) + "," +
-             DoubleToString(rates[i].low, digits) + "," + DoubleToString(rates[i].close, digits) + "]";
+             DoubleToString(rates[i].low, digits) + "," + DoubleToString(rates[i].close, digits) + "," +
+             DoubleToString(rates[i].spread * point, digits) + "]";
     }
     arr += "]}";
   }
