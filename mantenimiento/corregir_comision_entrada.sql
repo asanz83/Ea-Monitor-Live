@@ -20,15 +20,15 @@
 
 -- 1) Comprobacion (no cambia nada)
 with cortes(account_id, corte) as (values
-  (2,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- fondeada 166081
-  (3,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- incubacion
-  (4,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- incubacion2
-  (5,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- XAUUSD Incubacion
-  (6,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- DEMO NDX
-  (7,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- USDJPY_incubacion
-  (8,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- H4 Incubacion
-  (9,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- Incubacion 001
-  (10, timestamptz '2026-10-DD HH:MM:SS+00')    -- DARWINEX ZERO
+  (2,  timestamptz '2026-10-12 15:30:00+00'),   -- fondeada 166081
+  (3,  timestamptz '2026-10-12 15:30:00+00'),   -- incubacion
+  (4,  timestamptz '2026-10-12 15:30:00+00'),   -- incubacion2
+  (5,  timestamptz '2026-10-12 15:30:00+00'),   -- XAUUSD Incubacion
+  (6,  timestamptz '2026-10-12 15:30:00+00'),   -- DEMO NDX
+  (7,  timestamptz '2026-10-12 15:30:00+00'),   -- USDJPY_incubacion
+  (8,  timestamptz '2026-10-12 15:30:00+00'),   -- H4 Incubacion
+  (9,  timestamptz '2026-10-12 15:30:00+00'),   -- Incubacion 001
+  (10, timestamptz '2026-10-12 15:30:00+00')    -- DARWINEX ZERO
 )
 select c.account_id, count(*) as filas, round(sum(t.commission)::numeric, 2) as comision_actual,
        round((2 * sum(t.commission))::numeric, 2) as comision_tras_corregir
@@ -38,22 +38,22 @@ group by c.account_id order by c.account_id;
 
 -- 2) Correccion (ejecutar una sola vez, con la MISMA lista `cortes`)
 -- with cortes(account_id, corte) as (values
---   (2,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- fondeada 166081
---   (3,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- incubacion
---   (4,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- incubacion2
---   (5,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- XAUUSD Incubacion
---   (6,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- DEMO NDX
---   (7,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- USDJPY_incubacion
---   (8,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- H4 Incubacion
---   (9,  timestamptz '2026-10-DD HH:MM:SS+00'),   -- Incubacion 001
---   (10, timestamptz '2026-10-DD HH:MM:SS+00')    -- DARWINEX ZERO
+--   (2,  timestamptz '2026-10-12 15:30:00+00'),   -- fondeada 166081
+--   (3,  timestamptz '2026-10-12 15:30:00+00'),   -- incubacion
+--   (4,  timestamptz '2026-10-12 15:30:00+00'),   -- incubacion2
+--   (5,  timestamptz '2026-10-12 15:30:00+00'),   -- XAUUSD Incubacion
+--   (6,  timestamptz '2026-10-12 15:30:00+00'),   -- DEMO NDX
+--   (7,  timestamptz '2026-10-12 15:30:00+00'),   -- USDJPY_incubacion
+--   (8,  timestamptz '2026-10-12 15:30:00+00'),   -- H4 Incubacion
+--   (9,  timestamptz '2026-10-12 15:30:00+00'),   -- Incubacion 001
+--   (10, timestamptz '2026-10-12 15:30:00+00')    -- DARWINEX ZERO
 -- )
 -- update closed_trades t set commission = t.commission * 2
 -- from cortes c
 -- where c.account_id = t.account_id and t.ticket not like 'bf\_%' and t.commission <> 0 and t.inserted_at < c.corte;
 
--- NOTA 2026-10-12: la v1.14 NO funciono (el EA solo veia el historial de los ultimos minutos y no encontraba
--- la entrada de posiciones abiertas hace horas: seguia mandando la comision a la mitad, y open_price/open_time
--- vacios). La correccion real es la v1.15 (HistorySelectByPosition). Los cortes deben ser las horas en que
--- quedo instalada la v1.15 en cada cuenta, NO la v1.14. ANTES del UPDATE comprobar que los primeros cierres
--- nuevos ya llegan con la comision completa (p. ej. NDX ~ -5.5 por lote, no -2.75) y con open_price relleno.
+-- NOTA 2026-10-12: la v1.14 no funciono; la v1.15 (instalada en las 9 cuentas entre las 15:04 y las 15:10 UTC)
+-- si: verificado con cierres de las 19:00 hora servidor en incubacion2 (comision -5.89/lote, open_time relleno)
+-- y USDJPY_incubacion (-5.02/lote). Corte 15:30 UTC para las 9 cuentas: es posterior a todas las
+-- instalaciones y anterior al primer cierre con v1.15 (16:00 UTC); entre las 15:00 y las 16:00 UTC no cerro
+-- ninguna operacion, asi que no hay filas con comision completa antes del corte.
