@@ -7,7 +7,7 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.14"
+#property version   "1.15"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
@@ -306,20 +306,30 @@ string BuildClosedTradesJson() {
 }
 
 // Busca el deal de apertura (DEAL_ENTRY_IN) de la misma posición para sacar
-// precio y hora de entrada — un cierre por sí solo no los trae.
+// precio, hora y comisión de entrada — un cierre por sí solo no los trae.
+// v1.15: la selección de historial de BuildClosedTradesJson solo cubre los últimos minutos, así que la
+// ENTRADA de una posición abierta hace horas o días no estaba ahí: open_price/open_time salían vacíos y la
+// comisión de entrada no se sumaba (la v1.14 no corregía nada por eso). Ahora se carga el historial de
+// ESA posición con HistorySelectByPosition, y al terminar se restaura la selección de la ventana para que
+// el bucle del llamador siga igual.
 void FindOpeningPrice(ulong posId, ulong closingDeal, double &outPrice, datetime &outTime, double &outCommission) {
   outPrice = 0; outTime = 0; outCommission = 0;
-  int total = HistoryDealsTotal();
-  for (int i = 0; i < total; i++) {
-    ulong t = HistoryDealGetTicket(i);
-    if (t == 0 || t == closingDeal) continue;
-    if (HistoryDealGetInteger(t, DEAL_POSITION_ID) != posId) continue;
-    if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(t, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
-    outPrice = HistoryDealGetDouble(t, DEAL_PRICE);
-    outTime  = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
-    outCommission = HistoryDealGetDouble(t, DEAL_COMMISSION);   // comision de la pata de entrada
-    return;
+  if (HistorySelectByPosition(posId)) {
+    int total = HistoryDealsTotal();
+    bool first = true;
+    for (int i = 0; i < total; i++) {
+      ulong t = HistoryDealGetTicket(i);
+      if (t == 0 || t == closingDeal) continue;
+      if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(t, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+      if (first) {   // precio y hora de la primera entrada
+        outPrice = HistoryDealGetDouble(t, DEAL_PRICE);
+        outTime  = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
+        first = false;
+      }
+      outCommission += HistoryDealGetDouble(t, DEAL_COMMISSION);   // comision de la(s) pata(s) de entrada
+    }
   }
+  HistorySelect(g_lastHistoryCheck, TimeCurrent());   // restaura la ventana de cierres del llamador
 }
 
 //+------------------------------------------------------------------+
