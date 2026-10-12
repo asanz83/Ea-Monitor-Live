@@ -7,7 +7,7 @@
 //| — no toca ni sustituye a los EAs de trading que ya tengas puestos.|
 //+------------------------------------------------------------------+
 #property copyright "ea_monitor"
-#property version   "1.13"
+#property version   "1.14"
 #property strict
 
 input string InpServerUrl       = "https://muvioeiwhiwlcvbqiljn.supabase.co/functions/v1/ingest";
@@ -278,8 +278,8 @@ string BuildClosedTradesJson() {
     if (dtype != DEAL_TYPE_BUY && dtype != DEAL_TYPE_SELL) continue;
 
     ulong posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
-    double openPrice = 0; datetime openTime = 0;
-    FindOpeningPrice(posId, dealTicket, openPrice, openTime);
+    double openPrice = 0; datetime openTime = 0; double entryComm = 0;
+    FindOpeningPrice(posId, dealTicket, openPrice, openTime, entryComm);
 
     if (!first) s += ",";
     first = false;
@@ -293,7 +293,9 @@ string BuildClosedTradesJson() {
     s += "\"open_time\":\"" + TimeToIsoString(openTime) + "\",";
     s += "\"close_time\":\"" + TimeToIsoString((datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME)) + "\",";
     s += "\"profit\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_PROFIT), 2) + ",";
-    s += "\"commission\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_COMMISSION), 2) + ",";
+    // v1.14 -- comision de las DOS patas (entrada + salida). Antes solo iba la del cierre y el neto de
+    // las operaciones recientes salia ~mitad de comision de mas (detectado 2026-10-12 contra MT5).
+    s += "\"commission\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_COMMISSION) + entryComm, 2) + ",";
     s += "\"swap\":" + DoubleToString(HistoryDealGetDouble(dealTicket, DEAL_SWAP), 2) + ",";
     s += "\"magic\":" + IntegerToString((long)HistoryDealGetInteger(dealTicket, DEAL_MAGIC)) + ",";
     s += "\"comment\":\"" + JsonEscape(HistoryDealGetString(dealTicket, DEAL_COMMENT)) + "\"";
@@ -305,8 +307,8 @@ string BuildClosedTradesJson() {
 
 // Busca el deal de apertura (DEAL_ENTRY_IN) de la misma posición para sacar
 // precio y hora de entrada — un cierre por sí solo no los trae.
-void FindOpeningPrice(ulong posId, ulong closingDeal, double &outPrice, datetime &outTime) {
-  outPrice = 0; outTime = 0;
+void FindOpeningPrice(ulong posId, ulong closingDeal, double &outPrice, datetime &outTime, double &outCommission) {
+  outPrice = 0; outTime = 0; outCommission = 0;
   int total = HistoryDealsTotal();
   for (int i = 0; i < total; i++) {
     ulong t = HistoryDealGetTicket(i);
@@ -315,6 +317,7 @@ void FindOpeningPrice(ulong posId, ulong closingDeal, double &outPrice, datetime
     if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(t, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
     outPrice = HistoryDealGetDouble(t, DEAL_PRICE);
     outTime  = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
+    outCommission = HistoryDealGetDouble(t, DEAL_COMMISSION);   // comision de la pata de entrada
     return;
   }
 }
